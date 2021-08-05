@@ -1,0 +1,184 @@
+---
+title: "Explore SBIR Time Series"
+author: "Tommy Jones"
+date: "7/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, cache.lazy = FALSE)
+```
+
+```{r init}
+
+# load libraries
+library(tidyverse)
+library(textmineR)
+library(tidylda)
+library(tidytext)
+library(patchwork)
+library(ggrepel)
+
+load("data-derived/sbir_models-by-award-year.RData")
+```
+
+```{r prev-by-year}
+
+# get prevalence by year from the summary tables
+year_prev <- 
+  sbir_models %>%
+  map(function(x){
+    out <- x$summary
+  })
+
+for (j in seq_along(year_prev)) {
+  year_prev[[j]] <- 
+    year_prev[[j]] %>%
+    mutate(
+      year = as.numeric(names(year_prev)[j])
+    )
+}
+
+year_prev <- 
+  year_prev %>%
+  bind_rows()
+
+
+```
+
+```{r plot-topics-by-yr}
+
+for (j in sort(unique(year_prev$topic))) {
+  
+  title <- 
+    year_prev %>%
+    filter(topic == j & year == 2021) %>%
+    select(top_terms) %>%
+    as.character()
+  
+  title <- paste("topic:", j, "-", title)
+  
+  p1 <- year_prev %>% 
+    filter(topic == j) %>% 
+    ggplot() + 
+    geom_line(aes(x = year, y = prevalence)) +
+    xlim(1983, 2021) + 
+    labs(title = title)
+  
+  p2 <- year_prev %>% 
+    filter(topic == j) %>% 
+    ggplot() +  
+    geom_line(aes(x = year, y = coherence)) + 
+    xlim(1983, 2021)
+  
+  plot(p1 / p2)
+}
+
+
+
+```
+
+
+```{r words-by-year}
+
+year_words <- 
+  sbir_models %>%
+  parallel::mclapply(function(x) {
+    
+    # Beta
+    beta <- tidy(x, matrix = "beta")
+    
+    # old school R here
+    beta <- by(
+      beta, 
+      INDICES = beta$topic, 
+      function(y) {
+        y %>%
+          arrange(desc(beta)) %>%
+          .[1:10, ]
+      })
+    
+    beta <- do.call(rbind, beta)
+    
+    # Lambda
+    lambda <- tidy(x, matrix = "lambda")
+    
+    # old school R here
+    lambda <- by(
+      lambda, 
+      INDICES = lambda$topic, 
+      function(y) {
+        y %>%
+          arrange(desc(lambda)) %>%
+          .[1:10, ]
+      })
+    
+    lambda <- do.call(rbind, lambda)
+    
+    out <- beta %>%
+      full_join(
+        lambda
+      )
+    
+  }, mc.cores = 7)
+
+for (j in seq_along(year_words)) {
+  year_words[[j]] <- 
+    year_words[[j]] %>%
+    mutate(year = as.numeric(names(year_words)[j]))
+}
+
+year_words <- 
+  year_words %>%
+  bind_rows()
+
+```
+
+```{r plot-words-by-yr}
+
+for (j in sort(unique(year_words$topic))) {
+  
+  dat1 <- year_words %>%
+    filter(topic == j) %>%
+    group_by(year) %>%
+    slice_max(order_by = beta, n = 5)
+  
+  p1 <- dat1 %>%
+    ggplot() +
+    geom_line(aes(x = year, y = beta, color = token)) + 
+    xlim(1983, 2021) + 
+    labs(title = paste("topic:", j)) + 
+    geom_label_repel(
+      data = dat1 %>% filter(year %in% c(1983, 2021)),
+      aes(x = year, y = beta, label = token)
+    ) +
+    theme(legend.position = "none")
+  
+  # dat2 <- year_words %>%
+  #   filter(topic == j) %>%
+  #   group_by(year) %>%
+  #   slice_max(order_by = lambda, n = 5)
+  # 
+  # p2 <- dat2 %>%
+  #   ggplot() +
+  #   geom_line(aes(x = year, y = lambda, color = token)) + 
+  #   geom_label_repel(
+  #     data = dat2 %>% filter(year %in% c(1983, 2021)),
+  #     aes(x = year, y = lambda, label = token)
+  #   ) +
+  #   theme(legend.position = "none")
+  # 
+  # plot(p1/p2)
+  
+  p2 <- year_prev %>% 
+    filter(topic == j) %>% 
+    ggplot() + 
+    geom_line(aes(x = year, y = prevalence)) +
+    xlim(1983, 2021) 
+  
+  plot(p1/p2)
+  
+}
+
+```
+
